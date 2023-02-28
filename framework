@@ -1,0 +1,2065 @@
+local soundfadeservice = require(game.ReplicatedStorage.Modules.SoundFadeService)
+soundfadeservice.fadeInOutSound("in",script.Parent.Sounds.WindAmbient,5)
+
+repeat
+	wait()
+until game:IsLoaded()
+
+-- Essentials
+local plr = game.Players.LocalPlayer
+local char = plr.Character or plr.CharacterAdded:Wait()
+local hum = char:WaitForChild("Humanoid")
+
+-- Game related stuff
+local arms
+local cam = workspace.CurrentCamera
+local mouse = plr:GetMouse()
+
+-- Services
+local init = require(game.ReplicatedStorage.Modules.Deprecated.Init)
+
+local runservice = game:GetService("RunService")
+local userinputservice = game:GetService("UserInputService")
+local replicatedstorage = game:GetService("ReplicatedStorage")
+local tweenservice = game:GetService("TweenService")
+local events = replicatedstorage:WaitForChild("Events")
+local guiservice = game:GetService("GuiService")
+local spring = require(replicatedstorage.Modules:WaitForChild("SpringModule"))
+local camshakeservice = require(replicatedstorage.Modules:WaitForChild("CameraShakeModule"))
+local plrgui = plr.PlayerGui
+local plrstats = plr:WaitForChild("PlayerStats")
+local inventory = plrstats.Inventory
+local cameraservice
+local statsservice = game:GetService('Stats')
+local setupattatchmentmodule = require(game.ReplicatedStorage.Modules.SetupAttatchments)
+local setupskinmodule = require(game.ReplicatedStorage.Modules.SetupSkin)
+local plrTeam = plr.Team
+
+local guns = replicatedstorage:WaitForChild("Guns")
+local gunmodules = replicatedstorage:WaitForChild("GunModules")
+
+local direction = "None"
+
+-- Cam service stuff
+local functions
+local shakePresets 
+local camera 
+
+-- Sounds
+local walksound = script.Parent.Sounds.WalkSound
+local rustle = script.Parent.Sounds.RustleSound
+local land = script.Parent.Sounds.LandingSound
+local getup = script.Parent.Sounds.GetUpSound
+local getup2 = script.Parent.Sounds.GetUp2Sound
+local lobbysong = script.Parent.Sounds.LobbySong
+local clothingrustle = script.Parent.Sounds.ClothingRustle
+local windsound = script.Parent.Sounds.WindAmbient
+
+-- UI
+local guninfo = plrgui:WaitForChild("GunInfo")
+local crosshairUi = plrgui:WaitForChild("Crosshair")
+
+local ammocounter = guninfo:FindFirstChild("AmmoCounter")
+local gunname = guninfo:FindFirstChild("GunName")
+
+local ammo = ammocounter.Ammo
+local reserve = ammocounter.Reserve
+
+local primaryvpf = guninfo.PrimaryViewportFrame
+local secondaryvpf = guninfo.SecondaryViewportFrame
+local grenadevpf = guninfo.GrenadeViewportFrame
+
+local crosshair = script.Parent.Crosshair.Game.Game2
+
+local modal = script.Parent.GunInfo.Modal
+
+-----
+
+local weaponStats = plrgui:WaitForChild("WeaponStats")
+
+local currentMag = weaponStats.CurrentMag
+local currentMagBar = currentMag.Frame
+
+local magStats = weaponStats.MagStats
+
+local fullMagLabel = magStats.FullMagazines
+local semiFullMagLabel = magStats.SemiFullMagazines
+
+-- Client stats values
+local clientstats = plrgui:WaitForChild("ClientStats")
+
+local clientloadoutinfo = clientstats.LoadoutInfo
+
+local primarygunvalue = clientloadoutinfo.PrimaryGun
+local secondarygunvalue = clientloadoutinfo.SecondaryGun
+
+-- Recoil values
+local curshot = 0
+local lastclick = tick()
+local ratio
+
+-- Delta time annoying 
+local totalTime = 0
+local DeltaTime = 0
+local frequency = runservice.Heartbeat:Wait()
+
+-- Remote events
+local tag = events:WaitForChild("CreatorTag")
+local setupthirdpersonskin = events:WaitForChild("SetupThirdPersonGunSkin")
+
+-- Crosshair values
+local currentCrosshairTweenSize = 0
+
+-- Jumping value
+local jump = false
+
+-- Shooting angle
+local shootAngle = 0
+
+-- Vaulting
+local vaultavail = true
+
+-- Cam stuff
+local prevRot = CFrame.new()
+local oldCamCF 
+
+-- FastCast
+local fastCastModule = require(game.ReplicatedStorage.Modules.FastCastRedux)
+local fastCast
+
+local bulletFolder = workspace.TracerFolder 
+
+local bulletTemplate = game.ReplicatedStorage.Tracer:Clone()
+--[[
+bulletTemplate.Size = Vector3.new(0.05, 0.05, 5.1)
+bulletTemplate.Anchored = true
+bulletTemplate.CanCollide = false
+bulletTemplate.Material = Enum.Material.Neon
+bulletTemplate.BrickColor = BrickColor.new("Daisy orange")
+--]]
+
+local castParams = RaycastParams.new()
+castParams.FilterType = Enum.RaycastFilterType.Blacklist
+castParams.IgnoreWater = true
+castParams.FilterDescendantsInstances = {char, workspace.Ignore, bulletFolder}
+
+local fastCastBehaviour = fastCastModule.newBehavior()
+fastCastBehaviour.RaycastParams = castParams
+--fastCastBehaviour.Acceleration = Vector3.new(0,-workspace.Gravity,0)
+fastCastBehaviour.AutoIgnoreContainer = false
+fastCastBehaviour.CosmeticBulletContainer = bulletFolder
+fastCastBehaviour.CosmeticBulletTemplate = bulletTemplate
+
+--fastCastModule.VisualizeCasts = true
+
+-- TweenInfos 
+local aimTween = TweenInfo.new(
+	0.1,
+	Enum.EasingStyle.Linear,
+	Enum.EasingDirection.Out,
+	0,
+	false,
+	0
+)
+
+local tracerTween = TweenInfo.new(
+	0.3,
+	Enum.EasingStyle.Linear,
+	Enum.EasingDirection.InOut,
+	0,
+	false,
+	0
+)
+
+local WalkspeedTween = TweenInfo.new(
+	0.25,
+	Enum.EasingStyle.Linear,
+	Enum.EasingDirection.Out,
+	0,
+	false,
+	0
+)
+
+local soundTween = TweenInfo.new(
+	0.5,
+	Enum.EasingStyle.Linear,
+	Enum.EasingDirection.Out,
+	0,
+	false,
+	0
+)
+
+char.HumanoidRootPart.Anchored = true
+
+soundfadeservice.fadeInOutSound("in",lobbysong,.75)
+
+function clampCamera()
+	cam.CFrame = workspace.LobbyCamPart.CFrame
+end
+
+game.Lighting.Blur.Size = 20
+
+runservice:BindToRenderStep("ClampCamera",999999999,clampCamera)
+
+repeat wait() until clientloadoutinfo.LoadoutReady.Value == true
+
+wait(.5)
+
+runservice:UnbindFromRenderStep("ClampCamera")
+
+local tween = tweenservice:Create(game.Lighting.Blur,aimTween, {Size = 0})
+tween:Play()
+
+soundfadeservice.fadeInOutSound("out",lobbysong)
+--soundfadeservice.fadeInOutSound("out",windsound)
+
+cam.FieldOfView = plr.PlayerSettings.FieldOfView.Value
+
+local gunTable = {
+	-- Inventory
+	inventory = {
+		clientloadoutinfo.PrimaryGun.Value; -- Primary
+		clientloadoutinfo.SecondaryGun.Value; -- Secondary
+		clientloadoutinfo.Knife.Value; -- Knife
+		
+		currentGun = nil;
+		currentGunType = nil;
+	};
+	
+	-- Animations
+	animationtrack = {
+		idle = nil;
+		reload = nil;
+		tactical_reload = nil;
+		shoot = nil;
+		shootbolt = nil;
+		vault = nil;
+		bolt = nil;
+		inspect = nil;
+		
+		-- Third person
+		
+		idleThirdPerson = nil;
+		shootThirdPerson = nil;
+		crouchThirdPerson = nil;
+		vaultThirdPerson = nil;
+		crouchRunThirdPerson = nil;
+		
+		camera = {
+			random = nil;
+		};
+	};
+	
+	states = {
+		idle = 1;  
+		aiming  = 2;
+		reload  = 3;
+		shoot   = 4;
+		inspect = 5;
+	};
+	
+	springs = {
+		inputSway = spring.create();
+		walkCycle = spring.create();
+	};
+	
+	-- States
+	weapon = nil;
+	module = nil;
+	state = nil;
+	
+	-- CFrames 
+	idleCFrame = CFrame.new();
+	runCFrame = CFrame.new();
+	drawCFrame = CFrame.new();
+	aimCFrame = CFrame.new();
+	crouchCFrame = CFrame.new();
+	sprintCFrame = CFrame.new();
+	recoilCFrame = CFrame.new();
+	recoilMovementCFrame = CFrame.new();
+	strafeCFrame = CFrame.new();
+	boltCFrame = CFrame.new();
+	vaultCFrame = CFrame.new();
+	leanCFrame = CFrame.new();
+	
+		-- Camera CFrames --
+	camMoveCFrame = CFrame.new();
+	camJumpCFrame = CFrame.new();
+	camIdleCFrame = CFrame.new();
+	camCrouchCFrame = CFrame.new();
+	camRecoilCFrame = CFrame.new();
+	
+	-- Secondary states
+	running = false;
+	idle = false;
+	dead = false;
+	drawing = false;
+	aiming = false;
+	shooting = false;
+	inspecting = false;
+	crouching = false;
+	reloading = false;
+	sprinting = false;
+	jumping = false;
+	vaulting = false;
+	mouse1down = false;
+	leaning = false;
+	leanAngle = 0;
+	
+}
+
+userinputservice.MouseIconEnabled = false
+
+function delete()
+	cam:ClearAllChildren()
+end
+
+function lerp(a, b, t) -- Gets a number between two points using an alpha
+	return a * (1 - t) + (b * t)
+end
+
+function ShootRecoil()
+	local Accumulated = 0
+
+	curshot = (tick() - lastclick > gunTable.module.RecoilReset and 1 or curshot + 1) -- Either reset or or increase the current shot we're at
+	lastclick = tick()
+	for i, v in pairs(gunTable.module.RecoilPattern) do
+		if curshot <= v[1] then -- Found the current recoil we're at
+			spawn(function()
+				local num = 0
+				while math.abs(num - v[2]) > 0.01 do
+					num = lerp(num, v[2], v[4] * 60 * DeltaTime)
+					local rec = num / 10
+					cam.CFrame = cam.CFrame * CFrame.Angles(math.rad(rec), math.rad(rec * v[5]), 0)
+					runservice.Heartbeat:Wait()
+				end
+				while math.abs(num - v[3]) > 0.01 do
+					num = lerp(num, v[3], v[4] * 60 * DeltaTime)
+					local rec = num / 10
+					cam.CFrame = cam.CFrame * CFrame.Angles(math.rad(rec), math.rad(rec * v[5]), 0)
+					runservice.Heartbeat:Wait()
+				end
+			end)
+			break
+		end
+	end
+end
+
+function updateAmmo(usage,skinName)
+		
+	if usage == "shoot" then
+		gunTable.module.Ammo = gunTable.module.Ammo - 1
+		
+		ammo.Text = gunTable.module.Ammo
+		reserve.Text = gunTable.module.Reserve
+		
+		currentMagBar:TweenSize(UDim2.new(1,0,gunTable.module.Ammo/gunTable.module.MaxAmmo,0),"InOut","Quint",.15)
+		
+	elseif usage == "reload" and not gunTable.shooting then
+		gunTable.reloading = true
+		
+		if gunTable.module.FireMode ~= 3 and gunTable.module.FireMode ~= 4 and gunTable.module.FireMode ~= 5 then
+			if gunTable.module.Ammo > 0 then
+				gunTable.animationtrack.tactical_reload:Play()
+				repeat wait() until gunTable.animationtrack.tactical_reload.IsPlaying == false
+
+			elseif gunTable.module.Ammo == 0 then
+				gunTable.animationtrack.reload:Play()
+				repeat wait() until gunTable.animationtrack.reload.IsPlaying == false
+
+			end
+			
+		elseif gunTable.module.FireMode == 3 or gunTable.module.FireMode == 4 and gunTable.module.ReloadType == "EachShell" then
+			local timesToRepeat = gunTable.module.MaxAmmo - gunTable.module.Ammo
+			local num = 0
+			
+			repeat
+				if gunTable.dead == true then
+					break
+				else
+					if num == timesToRepeat - 1 then
+						gunTable.animationtrack.reload:Play()
+						repeat wait() until gunTable.animationtrack.reload.IsPlaying == false
+					else
+						gunTable.animationtrack.tactical_reload:Play()
+						repeat wait() until gunTable.animationtrack.tactical_reload.IsPlaying == false
+					end
+				end	
+				num = num + 1
+			until num == timesToRepeat
+			
+		elseif gunTable.module.FireMode == 3 or gunTable.module.FireMode == 4 and gunTable.module.ReloadType == "Mag" then
+			if gunTable.module.Ammo > 0 then
+				gunTable.animationtrack.tactical_reload:Play()
+				repeat wait() until gunTable.animationtrack.tactical_reload.IsPlaying == false
+
+			elseif gunTable.module.Ammo == 0 then
+				gunTable.animationtrack.reload:Play()
+				repeat wait() until gunTable.animationtrack.reload.IsPlaying == false
+
+			end
+			
+		elseif gunTable.module.FireMode == 5 then
+			if gunTable.module.Ammo > 0 then
+				gunTable.animationtrack.reload:Play()
+				repeat wait() until gunTable.animationtrack.reload.IsPlaying == false		
+			elseif gunTable.module.Ammo == 0 then
+				gunTable.animationtrack.reload:Play()
+				repeat wait() until gunTable.animationtrack.reload.IsPlaying == false		
+				
+				gunTable.animationtrack.bolt:Play()
+				repeat wait() until gunTable.animationtrack.bolt.IsPlaying == false
+			end
+			
+			
+		end
+		
+		if gunTable.module.Reserve > 0 then
+			if gunTable.module.Reserve >= gunTable.module.MaxAmmo then
+				
+				local amountToRemoveFromReserve = gunTable.module.MaxAmmo - gunTable.module.Ammo
+				
+				gunTable.module.Ammo = gunTable.module.MaxAmmo
+				gunTable.module.Reserve = gunTable.module.Reserve - amountToRemoveFromReserve
+				
+				ammo.Text = gunTable.module.Ammo
+				reserve.Text = gunTable.module.Reserve
+				
+			elseif gunTable.module.Reserve < gunTable.module.MaxAmmo then
+				
+				if (gunTable.module.MaxAmmo - gunTable.module.Ammo) < gunTable.module.Reserve then
+					local ammoToRemove = gunTable.module.MaxAmmo - gunTable.module.Ammo
+					
+					gunTable.module.Ammo = gunTable.module.MaxAmmo
+					
+					gunTable.module.Reserve = gunTable.module.Reserve - ammoToRemove
+					
+				elseif (gunTable.module.MaxAmmo - gunTable.module.Ammo) > gunTable.module.Reserve then
+					gunTable.module.Ammo = gunTable.module.Ammo + gunTable.module.Reserve
+					
+					gunTable.module.Reserve = 0
+				elseif (gunTable.module.MaxAmmo - gunTable.module.Ammo) == gunTable.module.Reserve then
+					gunTable.module.Ammo = gunTable.module.Ammo + gunTable.module.Reserve
+
+					gunTable.module.Reserve = 0
+				end
+				
+				ammo.Text = gunTable.module.Ammo
+				reserve.Text = gunTable.module.Reserve
+				
+			end
+		end
+		
+		gunTable.animationtrack.reload:Stop(.5)
+		
+		gunTable.reloading = false
+		
+		local num = math.floor(gunTable.module.Reserve/gunTable.module.MaxAmmo)
+		local semiFull = math.ceil(((gunTable.module.Reserve/gunTable.module.MaxAmmo))-num)
+		
+		fullMagLabel.Text = "<b>"..num.." full magazines</b>"
+		semiFullMagLabel.Text = "<b>"..semiFull.." semi-full magazines</b>"
+		
+		currentMagBar:TweenSize(UDim2.new(1,0,1,0),"InOut","Quint",.3)
+		
+	elseif usage == "updateammoui" then
+		ammo.Text = gunTable.module.Ammo
+		reserve.Text = gunTable.module.Reserve
+		
+		currentMagBar:TweenSize(UDim2.new(1,0,gunTable.module.Ammo/gunTable.module.MaxAmmo,0),"InOut","Quint",.05)
+		
+		local num = math.floor(gunTable.module.Reserve/gunTable.module.MaxAmmo)
+		local semiFull = math.ceil(((gunTable.module.Reserve/gunTable.module.MaxAmmo))-num)
+		
+		fullMagLabel.Text = "<b>"..num.." full magazines</b>"
+		semiFullMagLabel.Text = "<b>"..semiFull.." semi-full magazines</b>"
+
+	elseif usage == "resetammo" then
+		
+		local primModule = require(replicatedstorage.GunModules[gunTable.inventory[1]])
+		primModule.Ammo = primModule.MaxAmmo
+		primModule.Reserve = primModule.MaxReserve
+		
+		local secModule = require(replicatedstorage.GunModules[gunTable.inventory[2]])
+		
+		secModule.Ammo = secModule.MaxAmmo
+		secModule.Reserve = secModule.MaxReserve
+	
+		local num = math.floor(gunTable.module.Reserve/gunTable.module.MaxAmmo)
+		local semiFull = math.ceil(((gunTable.module.Reserve/gunTable.module.MaxAmmo))-num)
+		
+		fullMagLabel.Text = "<b>"..num.." full magazines</b>"
+		semiFullMagLabel.Text = "<b>"..semiFull.." semi-full magazines</b>"
+		
+	elseif usage == "gunnameui" then
+		if skinName ~= nil then
+			local text = gunTable.currentGun.." | "..skinName
+			gunname.Text = text
+--			print(gunname.Text.." "..text)
+		else
+			gunname.Text = gunTable.currentGun
+		end
+		
+	end
+end
+
+function onLengthChanged(cast,lastPoint,direction,length,velocity,bullet)
+	--print("bruh123")
+	if bullet then
+		local bulletLength = bullet.Size.Z/2
+		local offset = CFrame.new(0,0,-(length-bulletLength))
+		bullet.CFrame = CFrame.lookAt(lastPoint, lastPoint + direction):ToWorldSpace(offset)
+	end
+end
+
+function onRayHit(cast,result,velocity,bullet)
+	local hit = result.Instance
+	
+	local character = hit:FindFirstAncestorWhichIsA("Model")
+	if character and character:FindFirstChild("Humanoid") then
+		
+	end
+	bullet:Destroy()
+end
+
+function aim(usage)
+	if usage == "in" then
+		local tween = tweenservice:Create(cam,aimTween, {FieldOfView = plr.PlayerSettings.FieldOfView.Value/gunTable.module.Zoom})
+		tween:Play()
+		
+		local inInfo = TweenInfo.new(
+			1,
+			Enum.EasingStyle.Linear,
+			Enum.EasingDirection.Out,
+			0,
+			false,
+			0
+		)
+		
+		local tween = tweenservice:Create(gunTable.weapon.PrimaryPart,inInfo, {CFrame = gunTable.module.aimCFrame})
+		tween:Play()
+		
+	elseif usage == "out" then
+		
+		local tween = tweenservice:Create(cam,aimTween, {FieldOfView = plr.PlayerSettings.FieldOfView.Value})
+		tween:Play()
+
+		local inInfo = TweenInfo.new(
+			0.5,
+			Enum.EasingStyle.Linear,
+			Enum.EasingDirection.Out,
+			0,
+			false,
+			0
+		)
+
+		local tween = tweenservice:Create(gunTable.weapon.PrimaryPart,inInfo, {CFrame = gunTable.module.mainCFrame})
+		tween:Play()
+	end
+end
+
+function setupSkins(skinName,gun,thirdpersongun)
+	local skinmodule 
+	
+	if game.ReplicatedStorage.SkinModules:FindFirstChild(skinName) then
+		
+		skinmodule = require(game.ReplicatedStorage.SkinModules:FindFirstChild(skinName))
+		
+		local id = "rbxassetid://"..skinmodule.id
+		
+		local texFolder = Instance.new("Folder",script)
+		
+		local tex1 = Instance.new("Texture",texFolder)
+		tex1.Face = Enum.NormalId.Front
+		
+		local tex2 = Instance.new("Texture",texFolder)
+		tex2.Face = Enum.NormalId.Back
+		
+		local tex3 = Instance.new("Texture",texFolder)
+		tex3.Face = Enum.NormalId.Top
+		
+		local tex4 = Instance.new("Texture",texFolder)
+		tex4.Face = Enum.NormalId.Bottom
+		
+		local tex5 = Instance.new("Texture",texFolder)
+		tex5.Face = Enum.NormalId.Left
+		
+		local tex6 = Instance.new("Texture",texFolder)
+		tex6.Face = Enum.NormalId.Right
+		
+		for i,v in pairs(texFolder:GetChildren()) do
+			v.Texture = id
+			v.StudsPerTileU = 0.5
+			v.StudsPerTileV = 0.5
+		end
+		
+		local gunPartsThatCanSkin = {}
+		
+		for i,v in pairs(gun:GetChildren()) do
+			if v:FindFirstChild("CanHaveSkin") then
+				table.insert(gunPartsThatCanSkin,1,v)
+			end
+		end
+		
+		for i,v in pairs(gunPartsThatCanSkin) do
+			
+			for e,f in pairs(texFolder:GetChildren()) do
+				f:Clone().Parent = v
+			end
+			
+			print("Added skin to "..v.Name)
+			
+		end
+		
+		-- Third person
+		
+		skinmodule = require(game.ReplicatedStorage.SkinModules:FindFirstChild(skinName))
+		
+		setupthirdpersonskin:FireServer(thirdpersongun,skinmodule)
+
+		local id = "rbxassetid://"..skinmodule.id
+
+		local texFolder = Instance.new("Folder",script)
+
+		local tex1 = Instance.new("Texture",texFolder)
+		tex1.Face = Enum.NormalId.Front
+
+		local tex2 = Instance.new("Texture",texFolder)
+		tex2.Face = Enum.NormalId.Back
+
+		local tex3 = Instance.new("Texture",texFolder)
+		tex3.Face = Enum.NormalId.Top
+
+		local tex4 = Instance.new("Texture",texFolder)
+		tex4.Face = Enum.NormalId.Bottom
+
+		local tex5 = Instance.new("Texture",texFolder)
+		tex5.Face = Enum.NormalId.Left
+
+		local tex6 = Instance.new("Texture",texFolder)
+		tex6.Face = Enum.NormalId.Right
+
+		for i,v in pairs(texFolder:GetChildren()) do
+			v.Texture = id
+		end
+
+		local gunPartsThatCanSkinTP = {}
+
+		for i,v in pairs(thirdpersongun:GetChildren()) do
+			if v:FindFirstChild("CanHaveSkin") then
+				table.insert(gunPartsThatCanSkinTP,1,v)
+			end
+		end
+
+		for i,v in pairs(gunPartsThatCanSkinTP) do
+
+			for e,f in pairs(texFolder:GetChildren()) do
+				f:Clone().Parent = v
+			end
+
+			print("Added skin to "..v.Name)
+
+		end
+		
+	end
+end
+
+--[[
+function knifeStab()
+	
+	if gunTable.shooting == false then
+		local knife = gunTable.weapon:WaitForChild("Gun")
+		local damage = 100
+		
+		gunTable.shooting = true 
+		
+		local stabAnim = gunTable.animationtrack.shoot
+		stabAnim:Play()
+		gunTable.weapon:WaitForChild("Sounds").Fire:Play()
+		
+		knife.Blade.Touched:Connect(function(part)
+			print(part)
+			if gunTable.shooting == true then
+				
+				if part.Parent:FindFirstChild("Humanoid") then
+					
+					print('hum')
+					
+					local otherHumanoid = part.Parent:FindFirstChild("Humanoid")
+					
+					if otherHumanoid.Parent ~= char then
+						print('not char')
+						tag:FireServer(otherHumanoid,plr)
+						events.Stab:FireServer(part,otherHumanoid,damage)
+					end
+				end
+				--sends value(s) to server then
+			end
+		end)
+		
+		wait(60/gunTable.module.RateOfFire)
+		
+		gunTable.shooting = false
+	end
+	
+end
+--]]
+
+function setupGun(gun,guntype)
+	
+	fastCast = nil
+	fastCast = fastCastModule.new()
+	
+	if gunTable.dead == false then
+		
+		if plrTeam == game.Teams.revolutionaries then
+			arms = game.ReplicatedStorage.ArmModels.revolutionaries:Clone()
+			arms.Parent = cam
+			arms.Name = gun
+			
+		elseif plrTeam == game.Teams.military then
+			arms = game.ReplicatedStorage.ArmModels.military:Clone()
+			arms.Parent = cam
+			arms.Name = gun
+			
+		end
+		
+		local gunmodel = game.ReplicatedStorage.Guns[gun]:Clone()
+		
+		gunmodel.Parent = arms
+		gunmodel.Name = "Gun"
+		
+		gunTable.currentGun = gun
+		gunTable.currentGunType = guntype
+		
+		local M6D = Instance.new("Motor6D")
+		M6D.Parent = arms.HumanoidRootPart
+		
+		M6D.Part0 = arms.HumanoidRootPart
+		M6D.Part1 = gunmodel.Handle
+		
+		gunTable.state = gunTable.states.idle
+		gunTable.weapon = arms
+		gunTable.module = require(gunmodules[gun])
+		
+		gunmodel.Sounds.Parent = arms
+		
+		-- Third person stuff
+		
+		events.OnPlayerJoin:FireServer(gun)
+		events.Create3PFireSound:FireServer(gun)
+		
+		--- First Person Animations
+		local gunhumanoid = arms.Humanoid
+		
+			-- Idle --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://"..gunTable.module.idle
+		gunTable.animationtrack.idle = gunhumanoid:LoadAnimation(animation)
+		
+			-- Reload --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://"..gunTable.module.reload
+		gunTable.animationtrack.reload = gunhumanoid:LoadAnimation(animation)
+		gunTable.animationtrack.reload:AdjustWeight(0.00001,0.100000001)
+		
+			-- Tactical Reload -- 
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://"..gunTable.module.tactical_reload
+		gunTable.animationtrack.tactical_reload = gunhumanoid:LoadAnimation(animation)
+		gunTable.animationtrack.tactical_reload:AdjustWeight(0.00001,0.100000001)
+		
+			-- Shoot bolt --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://"..gunTable.module.shootbolt
+		gunTable.animationtrack.shootbolt = gunhumanoid:LoadAnimation(animation)
+		
+		-- Bolt --
+		if gunTable.module.bolt then
+			local animation = Instance.new("Animation",script)
+			animation.AnimationId = "rbxassetid://"..gunTable.module.bolt
+			gunTable.animationtrack.bolt = gunhumanoid:LoadAnimation(animation)
+		end
+		
+			-- Vault --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://7016616504"
+		gunTable.animationtrack.vault = gunhumanoid:LoadAnimation(animation)
+		
+			-- Inspect --
+		local animation = Instance.new("Animation",script)
+		if gunTable.module.inspect then
+			animation.AnimationId = "rbxassetid://"..gunTable.module.inspect
+			gunTable.animationtrack.inspect = gunhumanoid:LoadAnimation(animation)
+		end
+			
+		--- Third Person Animations
+		local humanoid = hum
+
+			-- Idle --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://"..gunTable.module.idleThirdPerson
+		gunTable.animationtrack.idleThirdPerson = humanoid:LoadAnimation(animation)
+		gunTable.animationtrack.idleThirdPerson.Looped = true
+		
+		animation:Destroy()
+		
+			-- Shoot --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://"..gunTable.module.shootThirdPerson
+		gunTable.animationtrack.shootThirdPerson = humanoid:LoadAnimation(animation)
+
+		animation:Destroy()
+		
+			-- Crouch --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://6899901110"
+		gunTable.animationtrack.crouchThirdPerson = humanoid:LoadAnimation(animation)
+
+		animation:Destroy()
+		
+			-- Crouch run --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://6899911459"
+		gunTable.animationtrack.crouchRunThirdPerson = humanoid:LoadAnimation(animation)
+		gunTable.animationtrack.crouchRunThirdPerson.Looped = true
+		
+		animation:Destroy()
+		
+			-- Vaulting --
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://7005595044"
+		gunTable.animationtrack.vaultThirdPerson = humanoid:LoadAnimation(animation)
+		gunTable.animationtrack.vaultThirdPerson.Looped = false
+		
+		-- Camera stuff lmao
+		
+		local animation = Instance.new("Animation",script)
+		animation.AnimationId = "rbxassetid://7281959601"
+		gunTable.animationtrack.camera.random = humanoid:LoadAnimation(animation)
+		
+		animation:Destroy()
+		
+		gunTable.animationtrack.camera.random:Play()
+		
+		print('bruh1')
+		
+		-- Sounds in animation
+		events.Mute3PFireSound.OnClientEvent:Connect(function()
+			char.Gun:WaitForChild("Muzzle").ThirdPersonFireSound.Volume = 0
+		end)
+		
+		gunTable.animationtrack.reload:GetMarkerReachedSignal("BoltBack"):Connect(function()
+			--	print('reached bolt-back')
+			gunTable.weapon:WaitForChild("Sounds").BoltBack:Play()
+		end)
+
+		gunTable.animationtrack.reload:GetMarkerReachedSignal("BoltForward"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").BoltForward:Play()
+		end)
+
+		gunTable.animationtrack.reload:GetMarkerReachedSignal("MagIn"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").MagIn:Play()
+		end)
+
+		gunTable.animationtrack.reload:GetMarkerReachedSignal("MagOut"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").MagOut:Play()
+		end)
+		
+		gunTable.animationtrack.reload:GetMarkerReachedSignal("MagHit"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").MagHit:Play()
+		end)
+		
+		-- Sounds in tactical animation
+		
+		gunTable.animationtrack.tactical_reload:GetMarkerReachedSignal("BoltBack"):Connect(function()
+			--	print('reached bolt-back')
+			gunTable.weapon:WaitForChild("Sounds").BoltBack:Play()
+		end)
+
+		gunTable.animationtrack.tactical_reload:GetMarkerReachedSignal("BoltForward"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").BoltForward:Play()
+		end)
+
+		gunTable.animationtrack.tactical_reload:GetMarkerReachedSignal("MagIn"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").MagIn:Play()
+		end)
+
+		gunTable.animationtrack.tactical_reload:GetMarkerReachedSignal("MagOut"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").MagOut:Play()
+		end)
+
+		gunTable.animationtrack.tactical_reload:GetMarkerReachedSignal("MagHit"):Connect(function()
+			gunTable.weapon:WaitForChild("Sounds").MagHit:Play()
+		end)
+		
+		-- Bolt
+		
+		if gunTable.animationtrack.bolt ~= nil then
+			gunTable.animationtrack.bolt:GetMarkerReachedSignal("BoltBack"):Connect(function()
+				--	print('reached bolt-back')
+				gunTable.weapon:WaitForChild("Sounds").BoltBack:Play()
+			end)
+
+			gunTable.animationtrack.bolt:GetMarkerReachedSignal("BoltForward"):Connect(function()
+				gunTable.weapon:WaitForChild("Sounds").BoltForward:Play()
+			end)
+		end
+
+
+		
+		-- Muzzle flash effects
+		
+		local muzzleflash = replicatedstorage:WaitForChild("MuzzleEffects").MuzzleFlash:Clone()
+		muzzleflash.Enabled = false
+		muzzleflash.Parent = gunTable.weapon:WaitForChild("Gun").Muzzle
+
+		local smoke = replicatedstorage:WaitForChild("MuzzleEffects").Smoke:Clone()
+		smoke.Enabled = false
+		smoke.Parent = gunTable.weapon:WaitForChild("Gun").Muzzle
+		
+		-- Skins
+		
+		--[[
+		local skinName = "Splatter"
+		
+		if game:GetService("MarketplaceService"):UserOwnsGamePassAsync(plr.UserId,19279789) then
+			setupSkins(skinName,gunmodel,char:WaitForChild("Gun"))
+			updateAmmo("gunnameui",skinName)
+		else
+			updateAmmo("gunnameui")
+		end
+		--]]
+		
+		local hasSkin = false
+		local skinName
+		
+		for i,v in pairs(inventory:GetChildren()) do
+			if v.ItemType.Value == "Skin" then
+				if v.Gun.Value == gun then
+					if v.Equipped.Value == true then
+						hasSkin = true
+						skinName = v.Name
+						setupSkins(skinName,gunmodel,char:WaitForChild("Gun"))
+					end
+				end
+			end
+		end
+		
+		if hasSkin == true then
+			updateAmmo("gunnameui",skinName)
+		else
+			updateAmmo("gunnameui")
+		end
+		
+		if guntype == "Primary" then
+		--	primarygunvalue = gun
+			primaryvpf.Ambient = Color3.fromRGB(255,255,255)
+			secondaryvpf.Ambient = Color3.fromRGB(200,200,200)
+			grenadevpf.Ambient = Color3.fromRGB(200,200,200)
+
+		elseif guntype == "Secondary" then
+		--	secondarygunvalue = gun
+			primaryvpf.Ambient = Color3.fromRGB(200,200,200)
+			secondaryvpf.Ambient = Color3.fromRGB(255,255,255)
+			grenadevpf.Ambient = Color3.fromRGB(200,200,200)
+
+		elseif guntype == "Grenade" then
+			primaryvpf.Ambient = Color3.fromRGB(200,200,200)
+			secondaryvpf.Ambient = Color3.fromRGB(200,200,200)
+			grenadevpf.Ambient = Color3.fromRGB(255,255,255)
+
+		end
+		
+		gunTable.animationtrack.idleThirdPerson:Play()
+		
+		hum.WalkSpeed = gunTable.module.WalkSpeed
+		
+		-- setupattatchmentmodule.setupAttatchments(gun,"EOTECH")
+		
+		fastCast.LengthChanged:Connect(onLengthChanged)
+		fastCast.RayHit:Connect(function(cast,result,veloc,bullet)
+			bullet:Destroy()
+		end)
+		
+		--[[
+		if guntype == "Primary" then
+			for i,v in pairs(primarygunvalue.Attatchments:GetChildren()) do
+				setupattatchmentmodule.setupAttatchments(gun,v.Value)
+			end
+		end
+		
+		if guntype == "Secondary" then
+			for i,v in pairs(secondarygunvalue.Attatchments:GetChildren()) do
+				setupattatchmentmodule.setupAttatchments(gun,v.Value)
+			end
+		end
+		--]]
+		
+		updateAmmo("updateammoui")
+	end
+end
+
+function reload()
+	if gunTable.animationtrack.inspect then gunTable.animationtrack.inspect:Stop(0) end
+	if gunTable.reloading == false and gunTable.module.Reserve > 0 then
+		gunTable.mouse1down = false
+		updateAmmo("reload")
+	elseif gunTable.module.Reserve == 0 then
+		print("No ammo!")
+	end
+end
+
+function updateCamera(cameraPart,humanoidRootPart)
+	
+	--[[
+	local prevRotX, prevRotY, prevRotZ = prevRot:ToEulerAnglesYXZ()
+	local currRotX, currRotY, currRotZ = cameraPart.CFrame:ToEulerAnglesYXZ()
+	cam.CFrame = cam.CFrame * CFrame.Angles(prevRotX-currRotX,currRotY-prevRotY,0)
+	prevRot = cameraPart.CFrame
+	--]]
+
+	--if humanoidRootPart.CameraBone.Transform ~= CFrame.new(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1) then
+		
+		local newCamCF = cameraPart.CFrame:ToObjectSpace(humanoidRootPart.CFrame)
+		if oldCamCF then
+			local _,_,z = newCamCF:ToOrientation()
+			local x,y,_ = newCamCF:ToObjectSpace(oldCamCF):ToEulerAnglesXYZ()
+			cam.CFrame = cam.CFrame * CFrame.Angles(x,y, -z)
+		end
+
+		oldCamCF = newCamCF
+	--end
+end
+
+
+
+function switch(weapon,guntype1)
+	
+	if gunTable.animationtrack.inspect then gunTable.animationtrack.inspect:Stop(0) end
+	
+	gunTable.drawing = true
+	
+	wait(.3)
+	
+	rustle:Play()
+	
+	delete()
+
+	setupGun(weapon,guntype1)
+
+	--Sound sequence
+	
+
+--	gunTable.weapon:WaitForChild("Sounds"):WaitForChild("Equip"):Play()
+
+	wait(1)
+
+	gunTable.drawing = false
+end
+
+function tweenCrosshair(intensity)
+	crosshair.A:TweenPosition(UDim2.new(0.5, -1, 1, math.ceil(-25 - (intensity*10)/6)),"InOut","Quint",0.175,true)
+	crosshair.C:TweenPosition(UDim2.new(0.5, -1, 0, math.ceil(10 +(intensity*10)/6)),"InOut","Quint",0.175,true)
+
+	crosshair.B:TweenPosition(UDim2.new(0, math.ceil(10 + (intensity*10)/6, 0.5, -1)),"InOut","Quint",0.175,true)
+	crosshair.D:TweenPosition(UDim2.new(1,  math.ceil(-28 -(intensity*10)/6, 0.5, -1)),"InOut","Quint",0.175,true)
+end
+
+
+function calculateDamageFallOff(startPos,endPos,minDamage,maxDamage,minFallOff,maxFallOff)
+	local distance = (endPos - startPos).Magnitude
+	
+	if distance < minFallOff then
+		return maxDamage
+		
+	elseif distance > maxFallOff then
+		return minDamage
+		
+	else
+		local fallOffRange = maxFallOff - minFallOff
+		local percentage = (distance - minFallOff) / fallOffRange
+		
+		local damageCalc = maxDamage - (maxDamage * percentage)
+		
+		local damage = math.clamp(damageCalc,minDamage,maxDamage)
+		
+		return damage
+	end
+end
+
+function newbullet()
+	
+	if gunTable.animationtrack.inspect ~= nil then
+		gunTable.animationtrack.inspect:Stop(0)
+	end
+
+	if not gunTable.shooting and not gunTable.reloading and gunTable.module.Ammo > 0 then
+		
+		local bulletsPerShot = 0
+		
+		local numBulletsPerShot = gunTable.module.BulletsPerShot
+		
+		if gunTable.sprinting then
+			gunTable.sprinting = false
+			hum.WalkSpeed = gunTable.module.WalkSpeed
+		end
+		
+		
+		if currentCrosshairTweenSize > 20 then
+			currentCrosshairTweenSize = 18
+		end
+		
+		gunTable.shooting = true
+
+		local muzzle = gunTable.weapon.Gun:WaitForChild("Muzzle")
+		
+		local damage = 0
+		
+		--[[
+		local tracer = game.ReplicatedStorage.tracer:Clone()
+		tracer.Parent = workspace
+		tracer.Position = muzzle.Position
+		--]]
+
+		gunTable.weapon.Gun.Muzzle.MuzzleFlash.Enabled = true
+		gunTable.weapon.Gun.Muzzle.Smoke.Enabled = true
+
+		gunTable.weapon:WaitForChild("Sounds").Fire:Play()
+		
+		if gunTable.module.Ammo <= 3 then
+			script.Parent.Sounds.Click:Play()
+		end
+
+		gunTable.animationtrack.shootThirdPerson:Play()
+		gunTable.animationtrack.shootbolt:Play()
+
+		gunTable.recoilCFrame = gunTable.module.shootCFrame
+
+		ShootRecoil()
+		currentCrosshairTweenSize = currentCrosshairTweenSize + 2
+		tweenCrosshair(currentCrosshairTweenSize)
+		
+		-- Real stuff lol
+		repeat
+			bulletsPerShot = bulletsPerShot + 1
+			local spread
+			
+			if gunTable.idle == false then
+				spread = gunTable.module.WalkSpread
+			elseif gunTable.idle == true then
+				spread = gunTable.module.Spread * 2
+			end
+			
+			local noSpreadRay = Ray.new(muzzle.CFrame.p, (mouse.Hit.p-muzzle.CFrame.p).Unit * 999)
+			
+			local spreadPosition = Vector3.new(
+				muzzle.CFrame.p.X + math.random(-spread, spread)/1000,
+				muzzle.CFrame.p.Y + math.random(-spread, spread)/1000,
+				muzzle.CFrame.p.Z + math.random(-spread, spread)/1000
+			)
+	 		
+			local ray = Ray.new(muzzle.CFrame.p, (mouse.Hit.p - spreadPosition).Unit * 999)
+			
+			local part, pos, normal = workspace:FindPartOnRayWithIgnoreList(ray, {cam,char,workspace.Ignore,workspace.TracerFolder})
+			
+			local distance = (gunTable.weapon.Gun.Muzzle.Position - pos).Magnitude
+			
+			--print(distance.." studs.")
+			
+			local firePoint = muzzle.Position
+			local hit = mouse.Hit.Position
+			local hitWithSpread = mouse.Hit.Position - spreadPosition
+			local direction = (hit - spreadPosition).Unit--firePoint).Unit
+			
+		--	print("spread position:"..spreadPosition.."hit after:"..hitWithSpread.."hit before: "..hit)
+			
+			fastCast:Fire(firePoint,direction,400,fastCastBehaviour)
+			
+			print("Fired")
+			
+			--[[
+			local tween = tweenservice:Create(tracer,tracerTween, {Position = pos})
+			tween:Play()
+			--]]
+			if part then
+				if part.Parent:FindFirstChild("Humanoid") then
+					
+					if part.Parent:FindFirstChild("Humanoid").Health > 0 then
+						script.Parent.Crosshair.HitMarker:Play()
+					end
+					
+					local otherHumanoid = part.Parent:FindFirstChild("Humanoid")
+					
+					tag:FireServer(otherHumanoid,plr)
+					
+					if part.Name == "Head" then
+						local damageWithFalloff = calculateDamageFallOff(
+							gunTable.weapon:WaitForChild("Gun").Muzzle.Position,
+							pos,
+							gunTable.module.MinDamage,
+							gunTable.module.MaxDamage,
+							gunTable.module.MinFalloffRange,
+							gunTable.module.MaxFalloffRange
+						)
+						
+						damage = damageWithFalloff * gunTable.module.HeadMultiplier
+						
+						print(damage.." to the head with "..gunTable.currentGun)
+					else
+						damage = calculateDamageFallOff(
+							gunTable.weapon:WaitForChild("Gun").Muzzle.Position,
+							pos,
+							gunTable.module.MinDamage,
+							gunTable.module.MaxDamage,
+							gunTable.module.MinFalloffRange,
+							gunTable.module.MaxFalloffRange
+						)
+						
+						warn(damage.." to the body with "..gunTable.currentGun)
+					end
+				end
+
+				events.Shoot:FireServer(part,pos,damage,normal) --sends value(s) to server
+			end
+	
+		until bulletsPerShot == numBulletsPerShot
+		
+		updateAmmo("shoot")
+		
+		local bulletsPerShot = 0
+		
+		if gunTable.module.bolt then
+			
+			gunTable.aiming = false
+			
+			gunTable.animationtrack.bolt:Play()
+
+		end
+		
+		wait(60/gunTable.module.RateOfFire) 
+				
+		gunTable.weapon.Gun.Muzzle.MuzzleFlash.Enabled = false
+		gunTable.weapon.Gun.Muzzle.Smoke.Enabled = false
+	
+		gunTable.shooting = false
+		
+	elseif gunTable.module.Ammo == 0 then
+		gunTable.shooting = true
+		script.Parent.Sounds.Click:Play()
+		
+		wait(60/gunTable.module.RateOfFire)
+		gunTable.shooting = false
+	end
+end
+
+local function getBobbing(addition,speed,modifier)
+	return math.sin(tick()*addition*speed)*modifier
+end
+
+runservice.RenderStepped:Connect(function(deltaTime)
+		
+	if (hum.MoveDirection:Dot(cam.CFrame.RightVector) > 0.75) then -- Going right
+		direction = "Right"
+	elseif (hum.MoveDirection:Dot(-cam.CFrame.RightVector) > 0.75) then -- Going left
+		direction = "Left"
+	else
+		direction = "None"
+	end
+
+	
+	ratio = 60 / (1/deltaTime)
+	
+	DeltaTime = deltaTime
+		
+	mouse.TargetFilter = cam
+	
+	if gunTable.dead == false then
+
+		-- Main function to keep gun on camera
+		
+		if arms then
+			updateCamera(arms.CameraBone,arms.HumanoidRootPart)
+
+			
+			arms:SetPrimaryPartCFrame(
+				cam.CFrame
+					* gunTable.module.mainCFrame
+					* gunTable.idleCFrame
+					* gunTable.runCFrame
+					* gunTable.recoilCFrame
+			
+					-- Secondary CFrames
+					* gunTable.drawCFrame
+					* gunTable.leanCFrame
+					* gunTable.aimCFrame
+					* gunTable.crouchCFrame
+					* gunTable.sprintCFrame
+					* gunTable.camJumpCFrame
+					--* gunTable.recoilMovementCFrame
+					* gunTable.strafeCFrame
+					* gunTable.vaultCFrame
+			)
+			
+			cam.CFrame = cam.CFrame 
+				* gunTable.camMoveCFrame
+				* gunTable.camIdleCFrame
+				* gunTable.camCrouchCFrame
+
+		end
+		
+		local mouseDelta = game:GetService("UserInputService"):GetMouseDelta()
+
+		local sway = gunTable.springs.inputSway:update(deltaTime)
+		gunTable.springs.inputSway:shove(Vector3.new(mouseDelta.x / 150 , mouseDelta.y / 150)) --not sure if this needs deltaTime filtering
+		gunTable.weapon.HumanoidRootPart.CFrame = gunTable.weapon.HumanoidRootPart.CFrame * CFrame.Angles(0,-sway.x,-sway.y)
+		
+	--	print(frequency)
+		
+		--[[
+		totalTime += deltaTime
+		if (totalTime < 1/60) then
+			return
+		end
+		totalTime = 0
+		--]]
+		
+		-- Camera stuff
+
+		-- Idle
+
+		if gunTable.idle == true then
+			gunTable.camIdleCFrame = gunTable.camIdleCFrame:Lerp(CFrame.new()*CFrame.Angles(
+				0,
+				0.0005 * math.cos(tick() * 6),
+				0.002 * math.cos(tick() * 3))
+						
+				,0.1 * 60 * deltaTime)
+		else
+			gunTable.camIdleCFrame = gunTable.camIdleCFrame:Lerp(CFrame.new(),0.1 * 60 * deltaTime)
+		end
+
+		-- Running
+
+		if gunTable.running == true then
+			gunTable.camMoveCFrame = gunTable.camMoveCFrame:Lerp(CFrame.new()*CFrame.Angles(
+				math.rad(0.025 * math.cos(tick() * 4)),
+				0,
+				math.rad(1 * math.cos(tick() * 6))
+				)
+				
+				,0.1 * 60 * deltaTime)
+		else
+			gunTable.camMoveCFrame = gunTable.camMoveCFrame:Lerp(CFrame.new(),0.1 * 60 * deltaTime)
+		end
+		
+		if gunTable.running == true and gunTable.sprinting == true then
+			gunTable.camMoveCFrame = gunTable.camMoveCFrame:Lerp(CFrame.new()*CFrame.Angles(
+				math.rad(0.05 * math.cos(tick() * 4)),
+				0,
+				math.rad(1.8 * math.cos(tick() * 6)))
+				
+				,0.1 * 60 * deltaTime)
+		else
+			gunTable.camMoveCFrame = gunTable.camMoveCFrame:Lerp(CFrame.new(),0.1 * 60 * deltaTime)
+		end
+		
+		-- Shooting
+		
+		if gunTable.shooting == true then
+			gunTable.camRecoilCFrame = gunTable.camRecoilCFrame:Lerp(CFrame.new()*CFrame.Angles(
+				0,
+				math.rad(5),
+				0
+				),0.1 * 60 * deltaTime)
+		else
+			gunTable.camRecoilCFrame = gunTable.camRecoilCFrame:Lerp(CFrame.new()*CFrame.Angles(0,0,0),0.1 * 60 * deltaTime)
+		end
+		
+		-- Crouching
+		
+		if gunTable.crouching == true then
+			hum.WalkSpeed = 3
+			gunTable.camCrouchCFrame = gunTable.camCrouchCFrame:Lerp(CFrame.new(
+				0,
+				-2.5,
+				0)
+			,0.1 * 60 * deltaTime)
+		else
+			gunTable.camCrouchCFrame = gunTable.camCrouchCFrame:Lerp(CFrame.new(
+				0,
+				0,
+				0)
+			,0.1 * 60 * deltaTime)
+		end
+	
+		-- States
+		
+		if gunTable.state == gunTable.states.idle then
+			if not gunTable.animationtrack.idle.IsPlaying then
+				gunTable.animationtrack.idle:Play()
+			end
+		end
+		
+		-- Movement variables --
+				
+		-- Running while not ADS'ing
+		
+		if gunTable.running == true and gunTable.aiming == false and gunTable.crouching == false then
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(
+				0.4 * math.cos(tick() * 6), --intensity left/right * math.sin(tick() * speed)
+			  	0.25 * math.acos(math.cos(tick() * 12)), --intensity up/down * math.sin(tick() * speed)
+				-0.1 * math.cos(tick() * 5)
+				)
+					* CFrame.Angles(
+						0.2 * math.cos(tick() * 5),
+						0.04 * math.acos(math.cos(tick() * 10)),
+						0.1 * math.cos(tick() * 7.5)
+					), 0.1 * 60 * deltaTime)
+		else
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(), 0.1 * 60 * deltaTime)
+		end
+		
+		-- Running while ADS'ing
+		
+		if gunTable.running == true and gunTable.aiming == true and gunTable.crouching == false then
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(
+				0.04 * math.cos(tick() * 6), --intensity left/right * math.sin(tick() * speed)
+				0.02 * math.cos(tick() * 12), --intensity up/down * math.sin(tick() * speed)
+				0
+				), 0.1 * 60 * deltaTime)
+		else
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(), 0.1* 60 * deltaTime)
+		end
+		
+		-- Running while crouching 
+		if gunTable.running == true and gunTable.crouching == true then
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(
+				0.02 * math.cos(tick() * 6), --intensity left/right * math.sin(tick() * speed)
+				0.01 * math.cos(tick() * 12), --intensity up/down * math.sin(tick() * speed)
+				0
+				), 0.1 * 60 * deltaTime)
+		else
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(), 0.1* 60 * deltaTime)
+		end
+		
+		--[[
+		
+		-- Running while sprinting 
+		if gunTable.running == true and gunTable.sprinting == true then
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(
+				0.5 * math.sin(tick() * 6), --intensity left/right * math.sin(tick() * speed)
+				0.25 * math.sin(tick() * 12), --intensity up/down * math.sin(tick() * speed)
+				0),.1)
+		else
+			gunTable.runCFrame = gunTable.runCFrame:Lerp(CFrame.new(), 0.1)
+		end
+		
+		--]]
+
+		
+		-- Sprinting
+		if gunTable.sprinting == true then
+			local tween = tweenservice:Create(cam,aimTween, {FieldOfView = plr.PlayerSettings.FieldOfView.Value * 1.25})
+			tween:Play()
+			
+			gunTable.sprintCFrame = gunTable.sprintCFrame:Lerp(gunTable.module.sprintCFrame
+				* CFrame.new(
+					0.4 * math.cos(tick() * 3),
+					0.1,
+					-0)
+					* CFrame.Angles(
+						0,
+						0.2 * math.cos(tick() * 6),
+						0.2 * math.cos(tick() * 6)
+					)
+				,.1 * 60 * deltaTime)
+		else
+			local tween = tweenservice:Create(cam,aimTween, {FieldOfView = plr.PlayerSettings.FieldOfView.Value})
+			tween:Play()
+			
+			gunTable.sprintCFrame = gunTable.sprintCFrame:Lerp(CFrame.new(), .1 * 60 * deltaTime)
+		end
+
+		-- Idle while not ADSing
+
+		if gunTable.idle == true and gunTable.aiming == false then
+			gunTable.idleCFrame = gunTable.idleCFrame:Lerp(CFrame.new(
+				0.08 * math.sin(tick() * .5), --intensity left/right * math.sin(tick() * speed)
+				0.04 * math.sin(tick() * 1), --intensity up/down * math.sin(tick() * speed)
+				0.0
+				),.1* 60 * deltaTime)
+
+			-- Idle while ADSing
+
+		elseif gunTable.idle == true and gunTable.aiming == true then
+			gunTable.idleCFrame = gunTable.idleCFrame:Lerp(CFrame.new(
+				0.001 * math.sin(tick() * .5), --intensity left/right * math.sin(tick() * speed)
+				0.0075 * math.sin(tick() * 1), --intensity up/down * math.sin(tick() * speed)
+				0.0
+				), .1* 60 * deltaTime)
+		else
+			gunTable.idleCFrame = gunTable.idleCFrame:Lerp(CFrame.new(), 0.1* 60 * deltaTime)
+		end
+		
+		-- Gun crouching
+		
+		if gunTable.crouching == true then
+			gunTable.crouchCFrame = gunTable.crouchCFrame:Lerp(CFrame.new(
+				0,
+				-2.5,
+				0)
+				,.1* 60 * deltaTime)
+		else
+			gunTable.crouchCFrame = gunTable.crouchCFrame:Lerp(CFrame.new(
+				0,
+				0,
+				0)
+				,.1* 60 * deltaTime)
+		end
+		
+		
+		-- Gun pull out
+		
+		if gunTable.drawing == true then
+			gunTable.drawCFrame = gunTable.drawCFrame:Lerp(CFrame.new(-2.5,-5,2.3) * CFrame.Angles(math.rad(50),math.rad(70),0), .1* 60 * deltaTime)
+		elseif gunTable.drawing == false then
+			gunTable.drawCFrame = gunTable.drawCFrame:Lerp(CFrame.new(),.1* 60 * deltaTime)
+		end
+		
+		-- Aiming
+		
+		if gunTable.aiming == true and gunTable.reloading == false then
+			local tween = tweenservice:Create(cam,aimTween, {FieldOfView = plr.PlayerSettings.FieldOfView.Value/gunTable.module.Zoom})
+			tween:Play()
+			
+			gunTable.aimCFrame = gunTable.aimCFrame:Lerp(gunTable.module.aimCFrame,0.1 * 60 * deltaTime)
+			gunTable.strafeCFrame = gunTable.strafeCFrame:Lerp(CFrame.new() * CFrame.Angles(0,0,0),.1)
+			crosshair.Visible = false
+		else
+			local tween = tweenservice:Create(cam,aimTween, {FieldOfView = plr.PlayerSettings.FieldOfView.Value})
+			tween:Play()
+			
+			gunTable.aimCFrame = gunTable.aimCFrame:Lerp(CFrame.new(),0.1 * 60 * deltaTime)
+			crosshair.Visible = true
+		end
+		
+		
+		gunTable.recoilCFrame = gunTable.recoilCFrame:Lerp(CFrame.new()*CFrame.Angles(math.rad(0),math.rad(0),math.rad(0)),0.1 * 60 * deltaTime)
+		
+		if gunTable.shooting then
+			gunTable.recoilMovementCFrame = gunTable.recoilMovementCFrame:Lerp(CFrame.new() * CFrame.Angles(
+				0,--0.15 * math.cos(tick() * 5),
+				0.1 * math.cos(tick() * 8),
+				0
+				), .1 * 60 * deltaTime)
+		else
+			gunTable.recoilMovementCFrame = gunTable.recoilMovementCFrame:Lerp(CFrame.new(),0.1 * 60 * deltaTime)
+		end
+		
+		-- Strafing
+		
+		if gunTable.aiming == false then
+			if direction == "Right" then
+				gunTable.strafeCFrame = gunTable.strafeCFrame:Lerp(CFrame.new() * CFrame.Angles(0,math.rad(-10),0),.1* 60 * deltaTime)
+			elseif direction == "Left" then
+				gunTable.strafeCFrame = gunTable.strafeCFrame:Lerp(CFrame.new() * CFrame.Angles(0,math.rad(10),0),.1* 60 * deltaTime)
+			elseif direction == "None" then
+				gunTable.strafeCFrame = gunTable.strafeCFrame:Lerp(CFrame.new() * CFrame.Angles(0,0,0),.1 * 60 * deltaTime)
+			end
+		end
+		
+		local r = Ray.new(char.HumanoidRootPart.Position, char.HumanoidRootPart.CFrame.LookVector * 7 + char.HumanoidRootPart.CFrame.UpVector * -5)
+		local part = workspace:FindPartOnRay(r,char)
+
+		if part and vaultavail and gunTable.dead == false then
+			if part:FindFirstChild("Vault") then
+				if hum.FloorMaterial ~= Enum.Material.Air then
+					vaultavail = false
+					gunTable.vaulting = true
+					local Vel = Instance.new("BodyVelocity")
+					Vel.Parent = char.HumanoidRootPart
+					Vel.Velocity = Vector3.new(0,0,0)
+					Vel.MaxForce = Vector3.new(1,1,1) * math.huge
+					Vel.Velocity = char.HumanoidRootPart.CFrame.LookVector * 20 + Vector3.new(0,20,0)
+					gunTable.animationtrack.vaultThirdPerson:Play()
+					gunTable.animationtrack.vault:Play()
+					game.Debris:AddItem(Vel, .15)
+					wait(0.35)
+					gunTable.vaulting = false
+					vaultavail = true
+				end
+			end
+		end
+		
+		if gunTable.vaulting == true then
+			gunTable.vaultCFrame = gunTable.vaultCFrame:Lerp(CFrame.new()*CFrame.Angles(math.rad(5),0,0),.1* 60 * deltaTime)
+		else
+			gunTable.vaultCFrame = gunTable.vaultCFrame:Lerp(CFrame.new(),.1* 60 * deltaTime)
+		end
+
+	end
+end)
+
+-- [[ Framework Implementation ]]
+
+-- Running handler
+
+char:WaitForChild("Humanoid").Running:Connect(function(speed)
+	if speed > 0.1 then
+		gunTable.running = true
+		gunTable.idle = false
+		
+		if not gunTable.crouching then
+		--	camshakeservice.shakeCamera(true,5,"walk")
+		end
+		if gunTable.crouching == true then
+			gunTable.animationtrack.crouchRunThirdPerson:Play()
+		end
+
+	else
+		gunTable.running = false
+		gunTable.idle = true
+		gunTable.sprinting = false
+			
+		if gunTable.crouching == true then
+			gunTable.animationtrack.crouchRunThirdPerson:Stop()
+		end
+		
+		camshakeservice.shakeCamera(false)
+		
+		if speed <= 5 then
+			currentCrosshairTweenSize = 5
+		elseif speed <= 10 and speed > 5 then
+			currentCrosshairTweenSize = 10
+		else
+			currentCrosshairTweenSize = 19
+		end
+		
+		tweenCrosshair(currentCrosshairTweenSize)
+	end
+	
+end)
+
+-- Inspect gun
+
+--[[
+userinputservice.InputBegan:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.F then
+		if gunTable.inspecting == false then
+			gunTable.inspecting = true
+			gunTable.animationtrack.inspect:Play(0)
+			repeat wait() until gunTable.animationtrack.inspect.IsPlaying == false
+			gunTable.animationtrack.inspect:Stop(0)
+			gunTable.inspecting = false
+		end
+	end
+end)
+--]]
+
+-- Jumping handler
+
+hum.Jumping:Connect(function(active)
+	gunTable.crouching = false
+	gunTable.animationtrack.crouchThirdPerson:Stop()
+	
+	hum.WalkSpeed = gunTable.module.WalkSpeed
+	
+	if active == true then
+		currentCrosshairTweenSize = 25
+		tweenCrosshair(currentCrosshairTweenSize)
+		gunTable.jumping = true
+	else
+		currentCrosshairTweenSize = 10
+		tweenCrosshair(currentCrosshairTweenSize)
+		wait(.5)
+		gunTable.jumping = false
+	end
+end)
+
+hum.StateChanged:Connect(function(old,new)
+	if new == Enum.HumanoidStateType.Landed then
+		land:Play()
+	end
+end)
+
+-- Mouse unlock
+
+userinputservice.InputBegan:Connect(function(i)
+	if i.KeyCode == Enum.KeyCode.G then
+		modal.Visible = true
+		userinputservice.MouseIconEnabled = true
+	end
+end)
+
+userinputservice.InputEnded:Connect(function(i)
+	if i.KeyCode == Enum.KeyCode.G then
+		modal.Visible = false
+		userinputservice.MouseIconEnabled = false
+	end
+end)
+
+-- ADS'ing
+
+mouse.Button2Down:Connect(function()
+	gunTable.aiming = true
+	tweenCrosshair(5)
+	
+	wait(.1)
+	crosshair.Visible = false
+			
+end)
+
+mouse.Button2Up:Connect(function()
+	gunTable.aiming = false
+	crosshair.Visible = true
+end)
+
+--[[
+	
+		--]]
+
+userinputservice.InputBegan:Connect(function(key)
+	if key.KeyCode == Enum.KeyCode.Q then
+		if gunTable.aiming == false and gunTable.reloading == false then
+			gunTable.aiming = true
+			tweenCrosshair(5)
+			wait(.1)
+			crosshair.Visible = false
+			tweenCrosshair(currentCrosshairTweenSize)
+
+
+
+		elseif gunTable.aiming == true then
+			gunTable.aiming = false
+			crosshair.Visible = true 
+			tweenCrosshair(currentCrosshairTweenSize)
+
+		end
+	
+	end
+end)
+
+-- Shooting prototype
+
+mouse.Button1Down:Connect(function()
+	gunTable.mouse1down = true
+	
+	delay(0, function()
+		
+		if gunTable.module.FireMode == 1 and gunTable.shooting == false then 
+			
+			newbullet()
+			
+		elseif gunTable.module.FireMode == 2 then
+			
+			while gunTable.mouse1down and wait(1/60) do
+								
+				if gunTable.shooting then
+					break
+				end
+
+				newbullet()
+			end
+			
+		elseif gunTable.module.FireMode == 3 and gunTable.shooting == false then
+			newbullet()
+		elseif gunTable.module.FireMode == 5 then
+			if gunTable.shooting then return end
+			newbullet()
+		end
+	end)
+	
+end)
+
+mouse.Button1Up:Connect(function()
+	gunTable.mouse1down = false
+	currentCrosshairTweenSize = 5
+	tweenCrosshair(currentCrosshairTweenSize)
+end)
+
+-- Switching
+
+userinputservice.InputBegan:Connect(function(key,gameprocessed)
+	if key.KeyCode == Enum.KeyCode.One and gunTable.currentGun ~= gunTable.inventory[1] and not gameprocessed and not gunTable.reloading then
+		
+		if gunTable.reloading then return end
+		if gunTable.shooting then return end
+		
+		if gunTable.sprinting then
+			gunTable.sprinting = false
+			hum.WalkSpeed = gunTable.module.WalkSpeed
+		end
+		
+		char:FindFirstChild("Gun"):Destroy()
+		
+		gunTable.mouse1down = false
+		
+		switch(gunTable.inventory[1],"Primary")
+		
+		tweenCrosshair(10)
+		
+		updateAmmo("updateammoui")
+	
+	elseif key.KeyCode == Enum.KeyCode.Two and gunTable.currentGun ~= gunTable.inventory[2] and not gameprocessed and not gunTable.reloading then
+		
+		if gunTable.reloading then return end
+		if gunTable.shooting then return end
+		
+		if gunTable.sprinting then
+			gunTable.sprinting = false
+			hum.WalkSpeed = gunTable.module.WalkSpeed
+		end
+		
+		char:FindFirstChild("Gun"):Destroy()
+		
+		gunTable.mouse1down = false
+		
+		switch(gunTable.inventory[2],"Secondary")
+		
+		tweenCrosshair(10)
+		
+		updateAmmo("updateammoui")
+	end
+end)
+
+-- Reloading
+
+userinputservice.InputBegan:Connect(function(key,gameprocessed)
+	if key.KeyCode == Enum.KeyCode.R and gunTable.module.Ammo < gunTable.module.MaxAmmo and not gameprocessed and gunTable.reloading == false  and gunTable.FireMode ~= 3 then
+		if gunTable.sprinting then
+			gunTable.sprinting = false
+			hum.WalkSpeed = gunTable.module.WalkSpeed
+		end
+		
+		reload()
+	end
+end)
+
+-- Crouching
+
+userinputservice.InputBegan:Connect(function(key,gameprocessed)
+	if key.KeyCode == Enum.KeyCode.C then
+		if gunTable.crouching == false and gunTable.reloading == false and not gameprocessed and not gunTable.dead then
+			
+			if gunTable.sprinting == true then
+				gunTable.sprinting = false
+			end
+			
+			gunTable.crouching = true
+			hum.WalkSpeed = 3
+			getup2:Play()
+			
+			camshakeservice.shakeCamera(false)
+
+			gunTable.animationtrack.crouchThirdPerson:Play()
+			
+			currentCrosshairTweenSize = 3
+			tweenCrosshair(currentCrosshairTweenSize)
+			
+			
+		elseif gunTable.crouching == true and not gameprocessed then
+			
+			gunTable.crouching = false
+			hum.WalkSpeed = gunTable.module.WalkSpeed
+			getup:Play()
+			
+			--camshakeservice.shakeCamera(true,5,"walk")
+
+			
+			gunTable.animationtrack.crouchThirdPerson:Stop()
+			
+			currentCrosshairTweenSize = 5
+			tweenCrosshair(currentCrosshairTweenSize)
+
+		end
+	end
+end)
+
+-- Sprinting
+
+userinputservice.InputBegan:Connect(function(key)
+	if key.KeyCode == Enum.KeyCode.LeftShift and gunTable.crouching == false and gunTable.running == true  then
+		
+		wait(.25)		
+	
+		gunTable.sprinting = true		
+		walksound.PlaybackSpeed = 1.3
+		
+		local tween = tweenservice:Create(hum,WalkspeedTween, {WalkSpeed = gunTable.module.SprintSpeed})
+		tween:Play()
+		wait(.25)
+		hum.WalkSpeed = gunTable.module.SprintSpeed
+
+		currentCrosshairTweenSize = 20
+		tweenCrosshair(currentCrosshairTweenSize)
+		
+	end
+end)
+
+userinputservice.InputEnded:Connect(function(key)
+	if key.KeyCode == Enum.KeyCode.LeftShift and gunTable.crouching == false then
+		
+		wait(.25)
+		
+		gunTable.sprinting = false
+		walksound.PlaybackSpeed = 1
+		
+		local tween = tweenservice:Create(hum,WalkspeedTween, {WalkSpeed = gunTable.module.WalkSpeed})
+		tween:Play()
+		wait(.25)
+		hum.WalkSpeed = gunTable.module.WalkSpeed	
+		
+		currentCrosshairTweenSize = 5
+		tweenCrosshair(currentCrosshairTweenSize)
+		
+	end
+end)
+
+-- Jumping
+
+userinputservice.JumpRequest:Connect(function()
+	if hum.FloorMaterial == Enum.Material.Air then
+		jump = true
+		hum.JumpPower = 0
+		repeat wait() until hum.FloorMaterial ~= Enum.Material.Air
+		wait(.4)
+		jump = false
+	end
+end)
+
+userinputservice.InputBegan:connect(function(inputObject)
+	if inputObject.KeyCode == Enum.KeyCode.Space then
+		if jump == false then
+			hum.JumpPower = 17.5
+			hum.Jump = true
+		end
+	end
+end)
+
+events.RoundEnd.OnClientEvent:Connect(function()
+	runservice:BindToRenderStep("ClampCamera",999999999,clampCamera)
+	gunTable.dead = true
+	delete()
+end)
+
+-- Opened/Closed menu 
+guiservice.MenuOpened:Connect(function()
+	local tween = tweenservice:Create(game.Lighting.Blur,aimTween, {Size = 20})
+	tween:Play()
+end)
+
+guiservice.MenuClosed:Connect(function()
+	local tween = tweenservice:Create(game.Lighting.Blur,aimTween, {Size = 0})
+	tween:Play()
+end)
+
+script.Parent.BindableEvents.DeleteViewmodel.Event:Connect(function()
+	
+	for i,v in pairs(gunTable.animationtrack) do
+		print(v)
+		v = nil
+	end
+	
+	gunTable.running = false
+	gunTable.idle = false
+	gunTable.drawing = false
+	gunTable.aiming = false
+	gunTable.shooting = false
+	gunTable.inspecting = false
+	gunTable.crouching = false
+	gunTable.reloading = false
+	gunTable.sprinting = false
+	gunTable.jumping = false
+	gunTable.vaulting = false
+	gunTable.mouse1down = false
+	
+	if gunTable.sprinting == true then
+		gunTable.sprinting = false
+	end
+	if gunTable.crouching == true then
+		gunTable.crouching = false
+		gunTable.animationtrack.crouchThirdPerson:Stop()
+	end
+	delete()
+	tweenCrosshair(0)
+	events.SaveGunLoadout:FireServer(primarygunvalue.Value,secondarygunvalue.Value)
+	gunTable.dead = true
+	
+	if lobbysong.IsPlaying == false then
+		lobbysong.Volume = 0.5
+		lobbysong:Play()
+	end
+end)
+
+script.Parent.BindableEvents.SetupViewmodel.Event:Connect(function()
+	
+	updateAmmo("resetammo")
+	
+	script.Parent.BindableEvents.OnDeploy.Event:Connect(function()
+		if #cam:GetChildren() == 0 then
+			gunTable.dead = false
+			gunTable.inventory[1] = script.Parent.ClientStats.LoadoutInfo.PrimaryGun.Value
+			gunTable.inventory[2] = script.Parent.ClientStats.LoadoutInfo.SecondaryGun.Value
+
+			setupGun(script.Parent.ClientStats.LoadoutInfo.PrimaryGun.Value,"Primary")
+			
+			events.SetPlayerHumRPAnchored:FireServer(false)
+			
+			local tween = tweenservice:Create(lobbysong,soundTween, {Volume = 0})
+			tween:Play()
+			wait(.5)
+			lobbysong:Stop()
+			
+			updateAmmo("updateammoui")
+			
+			local tween = tweenservice:Create(game.Lighting.Blur,aimTween, {Size = 0})
+			tween:Play()
+			
+			guninfo.Enabled = true
+		--	
+			runservice:UnbindFromRenderStep("ClampCamera")
+		else
+			warn("Viewmodel already exists")
+		end
+	end)
+end)
+
+hum.Died:Connect(function()
+	camshakeservice.shakeCamera(false)
+	
+	if gunTable.sprinting == true then
+		gunTable.sprinting = false
+	end
+	if gunTable.crouching == true then
+		gunTable.crouching = false
+		gunTable.animationtrack.crouchThirdPerson:Stop()
+	end
+	delete()
+	tweenCrosshair(0)
+	events.SaveGunLoadout:FireServer(primarygunvalue.Value,secondarygunvalue.Value)
+	gunTable.dead = true
+end)
+
+game.Players.PlayerRemoving:Connect(function()
+	events.SaveGunLoadout:FireServer()
+end)
+
+setupGun(gunTable.inventory[1],"Primary")
+
+--[[
+local setupArms,newGunTable = init.Init(plr,gunTable)
+arms = setupArms
+arms.Parent = cam
+gunTable = newGunTable
+--]]
+
+
+events.SetPlayerHumRPAnchored:FireServer()
+
+gunTable.dead = false
+
+--crosshairUi.Enabled = true
+guninfo.Enabled = true
+--weaponStats.Enabled = true
+
